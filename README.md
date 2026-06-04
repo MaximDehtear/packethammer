@@ -1,4 +1,9 @@
 # PacketHammer
+## Demo Report
+
+View the interactive PacketHammer protocol report:
+
+👉 [Open SimpleTCP Protocol Report](https://maximdehtear.github.io/packethammer/index.html)
 
 **Autonomous network protocol reverse-engineering via cooperative LLM agents.**
 
