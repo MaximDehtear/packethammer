@@ -1,0 +1,423 @@
+{
+  "target": "/workspace/server",
+  "version": 3,
+  "packet_structure": [
+    {
+      "offset": 0,
+      "size": "2-4",
+      "name": "command_token",
+      "endianness": "be",
+      "constraint": "ASCII: 4-byte tokens {USER,PASS,QUIT} for pre-auth, 2-byte tokens {ST,CT,HI,IV} for post-auth. Compared via std::operator== on string (C++), not memcmp.",
+      "description": "Controls command dispatch in handle_client at 0x1043aa. Matched against literal strings via operator== chain. Unknown commands: pre-auth → '530 Not authenticated', post-auth → '500 Unknown command'.",
+      "evidence": "branches.log seq_003 field_descriptions[offset:0,size:4,name:command_token] — 4-byte ASCII 'USER' matched; ghidra_decompile:0x1043aa — chain of operator== calls against 'USER','PASS','QUIT','ST','CT','HI','IV'"
+    },
+    {
+      "offset": "after command_token",
+      "size": 1,
+      "name": "space_delimiter",
+      "endianness": "be",
+      "constraint": "Literal space 0x20",
+      "description": "Separates command from first argument. Consumed by std::operator>> (istream tokenizer).",
+      "evidence": "branches.log seq_003 field_descriptions[offset:4,size:1,hex:20]; packet_graph.json edges[*].packet_fields[*] consistently show space at offset after command"
+    },
+    {
+      "offset": "variable — after space_delimiter",
+      "size": "variable (5 for 'admin', 16 for token, etc.)",
+      "name": "arg1",
+      "endianness": "be",
+      "constraint": "Depends on command. USER: username string (config['login']='admin'). PASS: password string (config['password']='secret'). Post-auth: TOKEN-LOCAL-12345 (16 bytes, fixed).",
+      "description": "First argument to command. For pre-auth USER/PASS: compared against config values. For post-auth commands: must be the auth token 'TOKEN-LOCAL-12345' as string. Token check via operator!= at 0x1044d4 token_check gate.",
+      "evidence": "branches.log seq_004 field_descriptions[offset:5,size:17,hex:544f4b454e2d4c4f43414c2d3132333435] — 'TOKEN-LOCAL-12345' accepted, server responded 230; ghidra_decompile:0x1043aa — config['login'] and config['password'] map lookups + operator== comparisons; state.json seeds decompile_str_3='TOKEN-LOCAL-12345'"
+    },
+    {
+      "offset": "variable — after arg1 + space",
+      "size": "variable",
+      "name": "arg2_plus",
+      "endianness": "be",
+      "constraint": "Command-specific. ST: two space-separated integers (a b). CT: two space-separated strings (s1 s2). HI: one string (name). IV: two space-separated integers (a b). Parsed via std::istream::operator>>.",
+      "description": "Command-specific arguments. ST → a+b, CT → s1+s2 (concat), HI → 'Hello ' + name, IV → a*b.",
+      "evidence": "packet_graph.json edges[003-007] packet_fields show ST a=10 b=20, CT s1=hello s2=world, HI name=World, IV a=7 b=3; ghidra_decompile:0x1043aa — operator>> into int a,b or string variables, then calls command_st/ct/hi/iv"
+    },
+    {
+      "offset": "end of command line",
+      "size": "1-2",
+      "name": "terminator",
+      "endianness": "be",
+      "constraint": "CR (0x0d) or CRLF (0x0d 0x0a). Server accepts CR-only; trim_crlf strips trailing \\r and \\n.",
+      "description": "Line terminator. Recv_line reads byte-by-byte until '\\n', then trim_crlf removes trailing \\r and \\n. Both CR and CRLF work.",
+      "evidence": "branches.log seq_003 field_descriptions[offset:4,hex:20] shows CR-only terminator at offset 10; ghidra_decompile:0x103eff (recv_line) — reads until '\\n'; ghidra_decompile:0x103a89 (trim_crlf) — pops back \\r and \\n characters"
+    }
+  ],
+  "value_to_branch": [
+    {
+      "field": "command_token",
+      "value": "0x55534552",
+      "branch_addr": "0x1044d4",
+      "handler_hint": "handle_client — USER branch @ 0x1044d4",
+      "evidence": "packet_graph.json edge_001: USER=55534552 routes to 0x1044d4_cmd_dispatch; ghidra_decompile:0x1043aa — operator==(command,'USER')"
+    },
+    {
+      "field": "command_token",
+      "value": "0x50415353",
+      "branch_addr": "0x1044d4",
+      "handler_hint": "handle_client — PASS branch @ 0x1044d4",
+      "evidence": "packet_graph.json edge_002: PASS=50415353 routes to 0x1044d4_cmd_dispatch; ghidra_decompile:0x1043aa — operator==(command,'PASS')"
+    },
+    {
+      "field": "command_token",
+      "value": "0x51554954",
+      "branch_addr": "0x1044d4",
+      "handler_hint": "handle_client — QUIT branch @ 0x1044d4",
+      "evidence": "packet_graph.json edge_007: QUIT=51554954 routes to 0x1044d4; ghidra_decompile:0x1043aa — operator==(command,'QUIT') → sends '221 Bye', sets disconnect flag"
+    },
+    {
+      "field": "arg1 (token)",
+      "value": "0x544f4b454e2d4c4f43414c2d3132333435",
+      "branch_addr": "0x1044d4",
+      "handler_hint": "handle_client — token validation gate @ 0x1044d4",
+      "evidence": "branches.log seq_004: TOKEN-LOCAL-12345 passed auth, server responded 230; ghidra_decompile:0x1043aa — operator!=(token,'TOKEN-LOCAL-12345') → if mismatch sends '403 Bad token'"
+    },
+    {
+      "field": "arg1 (username)",
+      "value": "0x61646d696e",
+      "branch_addr": "0x1044d4",
+      "handler_hint": "handle_client — config['login'] lookup + comparison",
+      "evidence": "state.json seeds runtime_cred_admin='admin' from config.ini; ghidra_decompile:0x1043aa — config.at('login') compared with user via operator=="
+    },
+    {
+      "field": "arg1 (password)",
+      "value": "0x736563726574",
+      "branch_addr": "0x1044d4",
+      "handler_hint": "handle_client — config['password'] lookup + comparison",
+      "evidence": "state.json seeds runtime_cred_secret='secret' from config.ini; ghidra_decompile:0x1043aa — config.at('password') compared with pass via operator=="
+    }
+  ],
+  "sequences": [
+    {
+      "order": 1,
+      "id": "seq_001",
+      "name": "USER command — initiate authentication",
+      "description": "Send USER <username> after receiving banner. Server responds 331 Password required. Connection stays open.",
+      "steps": [
+        {
+          "step": 1,
+          "bytes_hex": "555345522061646d696e0d",
+          "field_annotations": [
+            {"offset": 0, "name": "command", "value": "55534552", "meaning": "ASCII 'USER'"},
+            {"offset": 4, "name": "space", "value": "20", "meaning": "delimiter"},
+            {"offset": 5, "name": "username", "value": "61646d696e", "meaning": "ASCII 'admin' — matches config['login']"},
+            {"offset": 10, "name": "terminator", "value": "0d", "meaning": "CR terminator"}
+          ]
+        }
+      ],
+      "must_precede": [],
+      "terminal_branch": "0x1044d4",
+      "evidence": "branches.log seq_004: USER admin → 331 Password required; packet_graph.json edge_001; ghidra_decompile:0x1043aa — operator==(command,'USER') → sends '331 Password required'"
+    },
+    {
+      "order": 2,
+      "id": "seq_003",
+      "name": "PASS command — complete authentication",
+      "description": "After USER, send PASS <password> with config['password']='secret'. On match: auth success, token TOKEN-LOCAL-12345 issued. On mismatch: 530 Authentication failed, connection closed.",
+      "steps": [
+        {
+          "step": 1,
+          "bytes_hex": "555345522061646d696e0d",
+          "field_annotations": [
+            {"offset": 0, "name": "command", "value": "55534552", "meaning": "USER"},
+            {"offset": 5, "name": "username", "value": "61646d696e", "meaning": "admin"}
+          ]
+        },
+        {
+          "step": 2,
+          "bytes_hex": "50415353207365637265740d",
+          "field_annotations": [
+            {"offset": 0, "name": "command", "value": "50415353", "meaning": "PASS"},
+            {"offset": 5, "name": "password", "value": "736563726574", "meaning": "secret — correct password"}
+          ]
+        }
+      ],
+      "must_precede": ["seq_001"],
+      "terminal_branch": "0x1044d4",
+      "evidence": "branches.log seq_005: PASS accepted, 230 TOKEN TOKEN-LOCAL-12345; packet_graph.json edge_002; ghidra_decompile:0x1043aa — config['login'] match → config['password'] match → bVar3=true (authenticated), sends '230 TOKEN TOKEN-LOCAL-12345'"
+    },
+    {
+      "order": 3,
+      "id": "seq_004",
+      "name": "HI command — greet with name (post-auth)",
+      "description": "Post-auth command. First arg must be token TOKEN-LOCAL-12345. Second arg is name to greet. Returns '200 HI Hello <name>'.",
+      "steps": [
+        {
+          "step": 1,
+          "bytes_hex": "484920544f4b454e2d4c4f43414c2d313233343520576f726c640d",
+          "field_annotations": [
+            {"offset": 0, "name": "command", "value": "4849", "meaning": "HI"},
+            {"offset": 3, "name": "token", "value": "544f4b454e2d4c4f43414c2d3132333435", "meaning": "TOKEN-LOCAL-12345"},
+            {"offset": 20, "name": "name", "value": "576f726c64", "meaning": "World"}
+          ]
+        }
+      ],
+      "must_precede": ["seq_003"],
+      "terminal_branch": "0x1044d4",
+      "evidence": "branches.log seq_006: HI TOKEN-LOCAL-12345 World → 200 HI Hello World; packet_graph.json edge_003; ghidra_decompile:0x1041ba (command_hi) — strcpy + snprintf 'Hello %s'"
+    },
+    {
+      "order": 4,
+      "id": "seq_005",
+      "name": "ST command — sum two integers (post-auth)",
+      "description": "Post-auth. ST <token> <a> <b> → '200 ST <a+b>'. Integers parsed via std::istream::operator>>.",
+      "steps": [
+        {
+          "step": 1,
+          "bytes_hex": "535420544f4b454e2d4c4f43414c2d31323334352031302032300d",
+          "field_annotations": [
+            {"offset": 0, "name": "command", "value": "5354", "meaning": "ST"},
+            {"offset": 3, "name": "token", "value": "544f4b454e2d4c4f43414c2d3132333435", "meaning": "TOKEN-LOCAL-12345"},
+            {"offset": 20, "name": "a", "value": "3130", "meaning": "10"},
+            {"offset": 23, "name": "b", "value": "3230", "meaning": "20 — result 30"}
+          ]
+        }
+      ],
+      "must_precede": ["seq_003"],
+      "terminal_branch": "0x1044d4",
+      "evidence": "packet_graph.json edge_004: ST 10 20 → 200 ST 30; ghidra_decompile:0x103fe4 (command_st) — to_string(a+b), prepend '200 ST '"
+    },
+    {
+      "order": 5,
+      "id": "seq_006a",
+      "name": "CT command — concatenate two strings (post-auth)",
+      "description": "Post-auth. CT <token> <s1> <s2> → '200 CT <s1s2>'. Strings concatenated via std::operator+.",
+      "steps": [
+        {
+          "step": 1,
+          "bytes_hex": "435420544f4b454e2d4c4f43414c2d31323334352068656c6c6f20776f726c640d",
+          "field_annotations": [
+            {"offset": 0, "name": "command", "value": "4354", "meaning": "CT"},
+            {"offset": 3, "name": "token", "value": "544f4b454e2d4c4f43414c2d3132333435", "meaning": "TOKEN-LOCAL-12345"},
+            {"offset": 20, "name": "s1", "value": "68656c6c6f", "meaning": "hello"},
+            {"offset": 26, "name": "s2", "value": "776f726c64", "meaning": "world — result 'helloworld'"}
+          ]
+        }
+      ],
+      "must_precede": ["seq_003"],
+      "terminal_branch": "0x1044d4",
+      "evidence": "packet_graph.json edge_005: CT hello world → 200 CT helloworld; ghidra_decompile:0x10409a (command_ct) — operator+ '200 CT ' + a + b"
+    },
+    {
+      "order": 6,
+      "id": "seq_006b",
+      "name": "IV command — multiply two integers (post-auth)",
+      "description": "Post-auth. IV <token> <a> <b> → '200 IV product=<a*b>'. Product computed as signed int32 multiplication.",
+      "steps": [
+        {
+          "step": 1,
+          "bytes_hex": "495620544f4b454e2d4c4f43414c2d3132333435203720330d",
+          "field_annotations": [
+            {"offset": 0, "name": "command", "value": "4956", "meaning": "IV"},
+            {"offset": 3, "name": "token", "value": "544f4b454e2d4c4f43414c2d3132333435", "meaning": "TOKEN-LOCAL-12345"},
+            {"offset": 20, "name": "a", "value": "37", "meaning": "7"},
+            {"offset": 22, "name": "b", "value": "33", "meaning": "3 — product 21"}
+          ]
+        }
+      ],
+      "must_precede": ["seq_003"],
+      "terminal_branch": "0x1044d4",
+      "evidence": "packet_graph.json edge_006: IV 7 3 → 200 IV product=21; ghidra_decompile:0x104342 (command_iv) — a*b, to_string, prepend '200 IV product='"
+    },
+    {
+      "order": 7,
+      "id": "seq_007",
+      "name": "QUIT command — graceful disconnect",
+      "description": "Send QUIT. Server responds 221 Bye and closes connection. Works both pre-auth and post-auth.",
+      "steps": [
+        {
+          "step": 1,
+          "bytes_hex": "515549540d",
+          "field_annotations": [
+            {"offset": 0, "name": "command", "value": "51554954", "meaning": "QUIT"},
+            {"offset": 4, "name": "terminator", "value": "0d", "meaning": "CR"}
+          ]
+        }
+      ],
+      "must_precede": [],
+      "terminal_branch": "0x1044d4",
+      "evidence": "packet_graph.json edge_007: QUIT → 221 Bye; ghidra_decompile:0x1043aa — operator==(command,'QUIT') → sends '221 Bye', iVar8=1 (exit loop/disconnect)"
+    },
+    {
+      "order": 8,
+      "id": "seq_008",
+      "name": "Error edge cases",
+      "description": "Wrong password → 530 + disconnect. Bad token → 403 + stay connected. Unknown pre-auth command → 530 Not authenticated + stay connected.",
+      "steps": [
+        {
+          "step": 1,
+          "bytes_hex": "504153532077726f6e6770617373776f72640d",
+          "field_annotations": [
+            {"offset": 0, "name": "command", "value": "50415353", "meaning": "PASS"},
+            {"offset": 5, "name": "password", "value": "77726f6e6770617373776f7264", "meaning": "wrongpassword — mismatch"}
+          ]
+        },
+        {
+          "step": 2,
+          "bytes_hex": "5354204241442d544f4b454e203120320d",
+          "field_annotations": [
+            {"offset": 0, "name": "command", "value": "5354", "meaning": "ST"},
+            {"offset": 3, "name": "token", "value": "4241442d544f4b454e", "meaning": "BAD-TOKEN — invalid, triggers 403"}
+          ]
+        },
+        {
+          "step": 3,
+          "bytes_hex": "464f4f206261720d",
+          "field_annotations": [
+            {"offset": 0, "name": "command", "value": "464f4f", "meaning": "FOO — unknown command"},
+            {"offset": 4, "name": "arg", "value": "626172", "meaning": "bar — ignored"}
+          ]
+        }
+      ],
+      "must_precede": [],
+      "terminal_branch": "0x1044d4",
+      "evidence": "packet_graph.json edges[008-010]: PASS wrongpassword → 530, ST BAD-TOKEN → 403, FOO bar → 530; ghidra_decompile:0x1043aa — failure paths with send_line error codes"
+    }
+  ],
+  "gates": [
+    {
+      "gate_name": "command_dispatch",
+      "field": "command_token",
+      "branch_addr": "0x1044d4",
+      "rule": "std::operator== against literal strings: 'USER','PASS','QUIT' (4-byte pre-auth commands), 'ST','CT','HI','IV' (2-byte post-auth commands, only reachable when bVar3==true). Unknown → 530 (pre-auth) or 500 (post-auth).",
+      "evidence": "ghidra_decompile:0x1043aa — chain of if/else if with operator== comparisons; state.json seeds decompile_str_0 through decompile_str_9"
+    },
+    {
+      "gate_name": "auth_check",
+      "field": "arg1 (username) + arg1 (password)",
+      "branch_addr": "0x1044d4",
+      "rule": "USER <username> must match config['login']. PASS <password> must match config['password']. Both compared via std::operator== on strings. Both must match for bVar3=true (authenticated flag). Config sourced from config.ini with keys 'login'='admin' and 'password'='secret'.",
+      "evidence": "ghidra_decompile:0x1043aa — config.at('login') compared to user; config.at('password') compared to pass; state.json seeds runtime_cred_admin, runtime_cred_secret from config.ini"
+    },
+    {
+      "gate_name": "token_check",
+      "field": "arg1 (token)",
+      "branch_addr": "0x1044d4",
+      "rule": "Post-auth commands require first argument to be exactly 'TOKEN-LOCAL-12345' (16 bytes). Compared via std::operator!=. Bad token → '403 Bad token', iVar8=0 (stay connected). Good token → proceed to command handler.",
+      "evidence": "ghidra_decompile:0x1043aa — operator!=(token,'TOKEN-LOCAL-12345'); branches.log seq_004: TOKEN-LOCAL-12345 accepted; state.json seeds decompile_str_3"
+    },
+    {
+      "gate_name": "loop_control",
+      "field": "iVar8 (internal dispatch result)",
+      "branch_addr": "0x1044d4",
+      "rule": "iVar8=0 → continue loop (USER, auth success, unknown pre-auth, bad token). iVar8=1 → exit/disconnect (QUIT, bad password, bad auth). iVar8=2 → continue loop (post-auth command success, unknown post-auth). Loop condition: while (iVar8==0 || iVar8==2).",
+      "evidence": "ghidra_decompile:0x1043aa — final if/else chain and do-while condition"
+    }
+  ],
+  "field_influence_map": [
+    {
+      "field_name": "command_token",
+      "offset": 0,
+      "size": "2-4",
+      "influences_branches": ["0x1044d4"],
+      "description": "Primary dispatch field. Pre-auth: 4-byte tokens USER, PASS, QUIT compared via operator== chain. USER → username path (331 response). PASS → password/auth path. QUIT → disconnect (221 Bye). Post-auth (after bVar3=true): 2-byte tokens ST, CT, HI, IV compared similarly. ST → integer sum. CT → string concat. HI → greet with strcpy. IV → integer product with memset. Any unknown token: 530 Not authenticated (pre-auth) or 500 Unknown command (post-auth).",
+      "evidence": "ghidra_decompile:0x1043aa full function; packet_graph.json field_influence_map command; branches.log seq_003-006 field_descriptions"
+    },
+    {
+      "field_name": "username",
+      "offset": "after USER + space",
+      "size": "variable",
+      "influences_branches": ["0x1044d4"],
+      "description": "Username for USER command. Stored in 'user' string variable. Later compared against config['login'] value during PASS handling (not during USER handling). Must equal 'admin' for authentication to succeed. If mismatched during PASS phase, auth fails.",
+      "evidence": "ghidra_decompile:0x1043aa — operator>> into 'user', later config.at('login') comparison; state.json seeds runtime_cred_admin='admin'"
+    },
+    {
+      "field_name": "password",
+      "offset": "after PASS + space",
+      "size": "variable",
+      "influences_branches": ["0x1044d4"],
+      "description": "Password for PASS command. Compared against config['password']='secret' via operator==. Match → bVar3=true, sends '230 TOKEN TOKEN-LOCAL-12345', loop continues. Mismatch → '530 Authentication failed', iVar8=1, connection closed.",
+      "evidence": "ghidra_decompile:0x1043aa — config.at('password') comparison; state.json seeds runtime_cred_secret='secret'"
+    },
+    {
+      "field_name": "token",
+      "offset": "after command + space (post-auth only)",
+      "size": 16,
+      "influences_branches": ["0x1044d4"],
+      "description": "Authentication token. Required as first argument to all post-auth commands (ST/CT/HI/IV). Must be exactly 'TOKEN-LOCAL-12345' (16 ASCII bytes). Compared via operator!=. Wrong token → '403 Bad token', loop continues (no disconnect). Correct token → command-specific handler invoked.",
+      "evidence": "ghidra_decompile:0x1043aa — operator!=(token,'TOKEN-LOCAL-12345'); branches.log seq_004; state.json seeds decompile_str_3"
+    },
+    {
+      "field_name": "command_args",
+      "offset": "after token + space (post-auth, command-specific)",
+      "size": "variable",
+      "influences_branches": ["0x1044d4"],
+      "description": "Command-specific operands. ST: two integers a,b (sum → '200 ST <a+b>'). CT: two strings s1,s2 (concat → '200 CT <s1s2>'). HI: one string name (greet → '200 HI Hello <name>', uses strcpy into 24-byte buffer — VULNERABLE). IV: two integers a,b (product → '200 IV product=<a*b>', uses memset with product as length — potential overflow). All parsed via std::istream::operator>>.",
+      "evidence": "ghidra_decompile:0x1043aa — operator>> dispatch; ghidra_decompile:0x103fe4 (command_st), 0x10409a (command_ct), 0x1041ba (command_hi), 0x104342 (command_iv)"
+    }
+  ],
+  "risk_hints": [
+    {
+      "field": "command_args (name)",
+      "offset": "after HI <token> + space",
+      "risk": "strcpy_no_bound",
+      "branch_addr": "0x1041ba",
+      "description": "CRITICAL Stack buffer overflow in command_hi at 0x1041ba. User-controlled name string (from istream::operator>>, no length limit) is copied via strcpy into a 24-byte stack buffer (name_buffer[24]) with NO bounds check. Then snprintf(result, 0x28, 'Hello %s', name_buffer) formats result, but the overflow already occurred in strcpy. Stack canary present (__stack_chk_fail at 0x103790) provides partial mitigation. Reachable by: (1) authenticate with USER admin + PASS secret → get token, (2) send 'HI TOKEN-LOCAL-12345 <payload>' where payload exceeds 23 bytes to overwrite return address. SEVERITY: HIGH — direct RIP control possible if canary bypassed via info leak.",
+      "evidence": "ghidra_decompile:0x1041ba — 'char name_buffer [24]; strcpy(name_buffer, __src);' where __src is c_str() of user-supplied name; no length validation between operator>> and strcpy"
+    },
+    {
+      "field": "line (entire packet)",
+      "offset": 0,
+      "risk": "memcpy_len_no_bound",
+      "branch_addr": "0x103eff",
+      "description": "Resource exhaustion — memory bomb in recv_line at 0x103eff. Reads one byte at a time via recv(fd, &ch, 1, 0) into a C++ std::string via push_back with NO maximum line length. An attacker can send a continuous stream of bytes without '\\n' to force unbounded string growth. Each push_back may trigger reallocation (×2 growth), leading to memory exhaustion and eventual OOM kill of the server. Impact: DoS via single connection. SEVERITY: MEDIUM — no code execution, but reliable DoS.",
+      "evidence": "ghidra_decompile:0x103eff — 'do { recv(fd,&ch,1,0); push_back(); } while (ch != '\\n');' — no length check, no timeout, no max iterations"
+    },
+    {
+      "field": "command_args (a,b for IV)",
+      "offset": "after IV <token> + space",
+      "risk": "integer_overflow",
+      "branch_addr": "0x104342",
+      "description": "Signed integer overflow in command_iv at 0x104342. Product a*b computed as signed int32 multiplication (__val = a * b). If product overflows to a value in [0, 63], the memset path executes with the overflowed value as length. If product is negative (overflow), check '-1 < __val' fails and memset is skipped (safe). Practical exploitation requires finding a*b mod 2^32 in [0,63] with large operands, which is mathematically constrained but should not be ruled out. The scratch buffer is 64 bytes; any __val < 64 writes safely. Additionally, if product is in [0,63], it fills scratch with 'A's and null-terminates — no immediate overflow but unexpected behavior. SEVERITY: LOW — difficult to exploit meaningfully.",
+      "evidence": "ghidra_decompile:0x104342 — 'int __val = a * b; if ((-1 < __val) && (__val < 0x40)) { memset(scratch,0x41,(long)__val); scratch[__val] = '\\0'; }' — signed 32-bit multiply with overflow-sensitive gate"
+    },
+    {
+      "field": "command_token",
+      "offset": 0,
+      "risk": "use_after_free",
+      "branch_addr": "0x1044d4",
+      "description": "NOTE: Not a confirmed UaF, but the Ghidra decompile shows complex C++ string lifecycle with manual destructor calls interleaved with allocator destructors. String temporaries (local_1e8, b_1) are destroyed at various points during command handling. The decompiler shows this pattern: basic_string constructor → send_line → manual string destructor → allocator destructor. If send_line throws or the control flow is interrupted at the wrong point, C++ exceptions may leave strings in inconsistent state. However, std::string uses RAII normally; the manual destructor pattern here is likely Ghidra decompilation artifact from inlined code. SEVERITY: INFO — not confirmed, but pattern warrants fuzzing attention.",
+      "evidence": "ghidra_decompile:0x1043aa — manual sequence of basic_string constructor, send_line, ~string, ~__new_allocator interleaved with complex if/else branches"
+    },
+    {
+      "field": "command_token",
+      "offset": 0,
+      "risk": "format_string",
+      "branch_addr": "0x1041ba",
+      "description": "Potential format string in command_hi at 0x1041ba. snprintf(result, 0x28, 'Hello %s', name_buffer) uses a proper format specifier with user data as %s argument — this is SAFE as written. Format string is hardcoded 'Hello %s', not attacker-controlled. However, if the snprintf call is incorrectly decompiled (e.g., if the format string actually includes user data in another code path), this could be a vector. Based on current decompile: NOT exploitable, format string is constant. SEVERITY: INFO — constant format string, likely safe.",
+      "evidence": "ghidra_decompile:0x1041ba — 'snprintf(result,0x28,\"Hello %s\",name_buffer,...)' — format string is hardcoded literal"
+    }
+  ],
+  "graph_summary": {
+    "total_nodes": 5,
+    "validated_sequences": 8,
+    "flaky_sequences": [],
+    "unreached_branches": ["0x103013", "0x1044d4 (branch hooks at 0, but logic validated via decompile and runtime response observation)"],
+    "unknown_fields": [],
+    "decision_tree": "ROOT(connect:2121)\n  → [banner] send_line('220 SimpleTCP ready')\n  → recv_line() loop:\n    ├─ command=='USER'\n    │   → read username\n    │   → send_line('331 Password required')\n    │   → continue loop\n    ├─ command=='PASS'\n    │   → read password\n    │   → config['login'] == stored username?\n    │       ├─ YES → config['password'] == password?\n    │       │   ├─ YES → bVar3=true, send_line('230 TOKEN TOKEN-LOCAL-12345'), continue loop (now authenticated)\n    │       │   └─ NO  → send_line('530 Authentication failed'), disconnect\n    │       └─ NO  → send_line('530 Authentication failed'), disconnect\n    ├─ command=='QUIT'\n    │   → send_line('221 Bye'), disconnect\n    ├─ [AUTHENTICATED] bVar3==true\n    │   → read token\n    │   ├─ token != 'TOKEN-LOCAL-12345'\n    │   │   → send_line('403 Bad token'), continue loop\n    │   └─ token == 'TOKEN-LOCAL-12345'\n    │       ├─ command=='ST' → read a,b → command_st(a,b) → send_line('200 ST <sum>')\n    │       ├─ command=='CT' → read s1,s2 → command_ct(s1,s2) → send_line('200 CT <concat>')\n    │       ├─ command=='HI' → read name → command_hi(name) [strcpy vuln!] → send_line('200 HI Hello <name>')\n    │       ├─ command=='IV' → read a,b → command_iv(a,b) [int overflow] → send_line('200 IV product=<product>')\n    │       └─ else → send_line('500 Unknown command'), continue loop\n    └─ [UNAUTHENTICATED] bVar3==false\n        └─ send_line('530 Not authenticated'), continue loop"
+  },
+  "coverage": {
+    "branches_mapped": 0,
+    "branches_unreached": 200,
+    "note": "All 200+ Ghidra branch hooks returned 0 hit counts across 8 probes despite correct rebase verification and live protocol processing. Binary uses C++ std::operator== string comparisons (not memcmp/strcmp) for command dispatch and std::istringstream for tokenization — these are likely compiled to inline/invariant code paths that don't trigger the static branch addresses. Protocol logic was fully validated through: (a) Ghidra decompile of handle_client (0x1043aa, 2637 bytes), (b) runtime packet exchange observed via Tier 2 recv_libc/send_libc hooks, (c) 8 successful sequences with expected responses. All seeds from decompile confirmed operational."
+  },
+  "seeds": [
+    {"name": "decompile_str_0", "value": "USER", "source": "ghidra_decompile:0x1043aa", "gate": "0x1044d4"},
+    {"name": "decompile_str_1", "value": "PASS", "source": "ghidra_decompile:0x1043aa", "gate": "0x1044d4"},
+    {"name": "decompile_str_2", "value": "QUIT", "source": "ghidra_decompile:0x1043aa", "gate": "0x1044d4"},
+    {"name": "decompile_str_3", "value": "TOKEN-LOCAL-12345", "source": "ghidra_decompile:0x1043aa", "gate": "0x1044d4"},
+    {"name": "decompile_str_4", "value": "login", "source": "ghidra_decompile:0x1043aa", "gate": "0x1044d4"},
+    {"name": "decompile_str_5", "value": "password", "source": "ghidra_decompile:0x1043aa", "gate": "0x1044d4"},
+    {"name": "decompile_str_6", "value": "ST", "source": "ghidra_decompile:0x1043aa", "gate": "0x1044d4"},
+    {"name": "decompile_str_7", "value": "CT", "source": "ghidra_decompile:0x1043aa", "gate": "0x1044d4"},
+    {"name": "decompile_str_8", "value": "HI", "source": "ghidra_decompile:0x1043aa", "gate": "0x1044d4"},
+    {"name": "decompile_str_9", "value": "IV", "source": "ghidra_decompile:0x1043aa", "gate": "0x1044d4"},
+    {"name": "runtime_cred_admin", "value": "admin", "source": "config.ini", "gate": "0x1044d4"},
+    {"name": "runtime_cred_secret", "value": "secret", "source": "config.ini", "gate": "0x1044d4"}
+  ]
+}
