@@ -162,24 +162,32 @@ chmod +x ./workspace/server
 
 The container sees it as `/workspace/server`.
 
-### 3. Start
+### 3. Start (interactive TUI)
 
 ```bash
 ./start.sh
 ```
 
-Runs interactively with `--network host` and `./workspace` bind-mounted to `/workspace`. On exit, automatically restores ownership of any files written as root inside the container.
+Runs interactively with `--network host` and `./workspace` bind-mounted to `/workspace`. `start.sh` passes `PH_INTERACTIVE=1`, which drops you into a shell instead of the autonomous runner. On exit, it automatically restores ownership of any files written as root inside the container.
 
-### 4. Run
+> The container's **default** entrypoint (when no `PH_INTERACTIVE` and no task env is set) is the autonomous runner — see [step 5](#5-autonomous-run-hands-off). Running `./start.sh` (or any container start with no `PH_TARGET`/`PH_PROMPT`) falls back to the interactive shell.
 
-Use `phammer` instead of `opencode` directly — it captures all agent output to a timestamped log file:
+### 4. Run (interactive)
+
+Use `phammer` instead of `opencode` directly — it captures all agent output to a timestamped log file. Pick the orchestrator for your task with `--agent`:
 
 ```bash
-phammer "Analyze the binary at /workspace/server. It is a network server.
+# Server-side protocol inference
+phammer run --agent server-orchestrator "Analyze the binary at /workspace/server. It is a network server.
 Run the full protocol inference pipeline and write all output to /workspace/netproto/server/."
+
+# Client-side closed-source reversing (discover connect target, redirect to a local fake peer)
+phammer run --agent client-orchestrator "Analyze the client binary at /workspace/client.
+Discover where it connects, redirect that connection in-process to a local fake peer,
+and record the client's outbound messages. Write output to /workspace/netproto/client/."
 ```
 
-The orchestrator initialises Frida, runs Ghidra, discovers the listening port, hooks all branch addresses, and begins the probe loop. No further input is required.
+There are two primary orchestrators — `server-orchestrator` and `client-orchestrator` — each with its own subagent stack, so always pass `--agent` to choose the flow. The orchestrator initialises Frida, runs Ghidra, and begins its loop. No further input is required.
 
 ### 5. Autonomous run (hands-off)
 
@@ -208,6 +216,18 @@ docker run --rm \
 | `PH_STALL_LIMIT` | `3` | Consecutive no-progress iterations before stopping |
 | `PH_INTERACTIVE` | `0` | Set to `1` to drop to an interactive shell instead of running |
 
+Client-mode is the same call with `PH_MODE=client` and a client binary:
+
+```bash
+docker run --rm \
+  --network host --add-host host.docker.internal:host-gateway \
+  -v "$(pwd)/workspace:/workspace" \
+  -e PH_MODE=client \
+  -e PH_TARGET=/workspace/client \
+  -e PH_PROMPT="Discover where /workspace/client connects, redirect it in-process to a local fake peer, and record its outbound messages. Write output to /workspace/netproto/client/." \
+  packethammer:latest
+```
+
 The final summary lands at `/workspace/netproto/<target>/RESULT.md` (phase, exit reason, coverage, and links to `protocol_model.json` and the evidence logs). Because `./workspace` is bind-mounted, it's available on the host immediately. Exit code `0` means a clean `done`; non-zero means a blocker, stall, or watchdog limit (the reason is in `RESULT.md`).
 
 To debug interactively instead, run with `-e PH_INTERACTIVE=1` (or use `./start.sh`, which keeps the legacy interactive shell) and drive it with `phammer` as in step 4.
@@ -232,6 +252,18 @@ Write all output to /workspace/netproto/server/.
 Analyze the binary at /workspace/server. It listens on TCP port 2121.
 Use channel socket:127.0.0.1:2121. Run full protocol inference.
 Write output to /workspace/netproto/server/.
+```
+</details>
+
+<details>
+<summary>Client mode — closed-source client (use <code>--agent client-orchestrator</code>)</summary>
+
+```
+Analyze the client binary at /workspace/client.
+Discover where it tries to connect (resolver/connect), redirect that connection
+in-process to a local fake peer, and record the client's outbound messages.
+Preserve the original destination alongside the redirect, and write output to
+/workspace/netproto/client/.
 ```
 </details>
 

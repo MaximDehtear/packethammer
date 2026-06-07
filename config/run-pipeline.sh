@@ -15,11 +15,6 @@
 #   PH_INTERACTIVE   if 1, drop to an interactive shell instead of running
 set -uo pipefail
 
-if [ "${PH_INTERACTIVE:-0}" = "1" ]; then
-    echo "[run-pipeline] PH_INTERACTIVE=1 -> interactive shell"
-    exec /bin/bash
-fi
-
 PH_MODE="${PH_MODE:-server}"
 PH_TARGET="${PH_TARGET:-}"
 PH_PROMPT="${PH_PROMPT:-}"
@@ -28,11 +23,23 @@ PH_MAX_ITERS="${PH_MAX_ITERS:-50}"
 PH_WALLCLOCK_SEC="${PH_WALLCLOCK_SEC:-14400}"
 PH_STALL_LIMIT="${PH_STALL_LIMIT:-3}"
 
-if [ "$PH_MODE" != "server" ] && [ "$PH_MODE" != "client" ]; then
-    echo "[run-pipeline] FATAL: PH_MODE must be 'server' or 'client' (got '$PH_MODE')"; exit 64
-fi
 if [ -z "$PH_PROMPT" ] && [ -f /workspace/INIT_PROMPT.txt ]; then
     PH_PROMPT="$(cat /workspace/INIT_PROMPT.txt)"
+fi
+
+# Interactive TUI mode: explicit (PH_INTERACTIVE=1), or implicit when no task was given
+# (this is what `./start.sh` does — keeps the legacy `phammer` TUI workflow available).
+if [ "${PH_INTERACTIVE:-0}" = "1" ] || { [ -z "$PH_TARGET" ] && [ -z "$PH_PROMPT" ]; }; then
+    if [ "${PH_INTERACTIVE:-0}" != "1" ]; then
+        echo "[run-pipeline] no PH_TARGET/PH_PROMPT given -> interactive shell."
+        echo "[run-pipeline] drive it with:  phammer run --agent server-orchestrator \"<prompt>\""
+        echo "[run-pipeline] for autonomous runs set PH_MODE / PH_TARGET / PH_PROMPT (see README)."
+    fi
+    exec /bin/bash
+fi
+
+if [ "$PH_MODE" != "server" ] && [ "$PH_MODE" != "client" ]; then
+    echo "[run-pipeline] FATAL: PH_MODE must be 'server' or 'client' (got '$PH_MODE')"; exit 64
 fi
 if [ -z "$PH_TARGET" ]; then
     echo "[run-pipeline] FATAL: PH_TARGET (absolute path to target binary) is required"; exit 64

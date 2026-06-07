@@ -12,13 +12,16 @@ mkdir -p "${WORKSPACE_DIR}/netproto"
 mkdir -p "${WORKSPACE_DIR}/logs"
 touch "${WORKSPACE_DIR}/netproto/knowledge.jsonl" 2>/dev/null || true
 
-echo "▶ Запуск ${CONTAINER_NAME} ..."
+echo "▶ Запуск ${CONTAINER_NAME} ... (интерактивный TUI)"
 echo "  ⌘ Маппинг: ${WORKSPACE_DIR} → /workspace"
+echo "  ℹ Для автономного прогона см. README раздел 'Autonomous run' (PH_MODE/PH_TARGET/PH_PROMPT)."
 
+# PH_INTERACTIVE=1 forces the legacy interactive shell instead of the autonomous runner.
 docker run -it --rm \
     --name "${CONTAINER_NAME}" \
     --network host \
     --add-host host.docker.internal:host-gateway \
+    -e PH_INTERACTIVE=1 \
     -v "${WORKSPACE_DIR}:/workspace" \
     "${IMAGE_NAME}:${TAG}"
 
