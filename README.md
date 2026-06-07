@@ -26,7 +26,7 @@ Before sending a single byte, PacketHammer runs Ghidra headless analysis on the 
 Frida spawns the target binary as a child process and injects a JS agent. The agent installs hit counters on every branch address discovered by Ghidra. After each packet send, the orchestrator reads exactly which branches were reached and which were not — giving branch-level code coverage as the feedback signal for guiding the next probe.
 
 **Layer 3 — LLM reasoning (opencode agents)**
-Six specialized agents read the coverage data and decide what to do next. They craft packets, interpret branch hits, decompile newly-covered functions, scan for vulnerabilities in real time, and build the protocol model incrementally. No human makes decisions at any step.
+A stack of specialized agents — one for server-side inference, a parallel one for client-side reversing — reads the coverage data and decides what to do next. They craft packets (or redirect client connections to a local peer), interpret branch hits, decompile newly-covered functions, scan for vulnerabilities in real time, and build the protocol model incrementally. No human makes decisions at any step.
 
 ### The probe loop
 
@@ -73,61 +73,80 @@ live_addr     = ghidra_addr − image_base + live_base
 
 ## Architecture
 
+Two independent agent stacks — **server** (protocol inference of a listening binary) and
+**client** (closed-source client reversing) — each with its own primary orchestrator and
+subagents. They never delegate across the boundary and only share the MCP infrastructure.
+
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                       Docker Container                           │
-│                                                                 │
-│  phammer (wrapper) → opencode TUI                               │
-│       │                                                         │
-│       ▼                                                         │
-│  server-orchestrator  (primary agent)                         │
-│       │  task tool  ── permission.task grants delegation        │
-│       │                                                         │
-│       ├─► @server-instrumenter                                     │
-│       │        ├── ghidra-headless MCP (stdio)                  │
-│       │        │     PyGhidra 3.1.0 → Ghidra 12.1 JVM          │
-│       │        └── frida-live MCP (stdio)                       │
-│       │              frida-mcp-server.py                        │
-│       │              Frida 17.10.1 → spawned target process     │
-│       │                                                         │
-│       ├─► @server-packet-crafter                                       │
-│       │        └── python3 / scapy / socket                     │
-│       │                                                         │
-│       ├─► @server-protocol-mapper                                      │
-│       │        └── reads logs → writes protocol_model.json      │
-│       │                                                         │
-│       ├─► @server-code-analyzer        (triggered: new branch covered) │
-│       │        ├── ghidra-headless_decompile (per function)     │
-│       │        └── frida-live_hook_address (Tier 2 oracle)      │
-│       │              writes vulnerabilities.jsonl               │
-│       │                                                         │
-│       └─► @server-analysis-supervisor  (triggered: every 5 steps)     │
-│                └── ghidra-headless_list_branches (gap analysis) │
-│                      returns recommendations only               │
-│                                                                 │
-│  Bind mount: ./workspace ↔ /workspace                           │
-│  Network: --network host  (container shares host ports)         │
-└─────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│                            Docker Container                             │
+│                                                                        │
+│  Entry:                                                                │
+│   • autonomous  → /opt/run-pipeline.sh   (default CMD, watchdog loop)  │
+│   • interactive → phammer run --agent <server|client>-orchestrator …   │
+│                                                                        │
+│  ┌─ SERVER stack ───────────────┐    ┌─ CLIENT stack ────────────────┐ │
+│  │ server-orchestrator (primary)│    │ client-orchestrator (primary) │ │
+│  │  owns state.json / graph     │    │  owns state.json / graph      │ │
+│  │   ├─► server-instrumenter*   │    │   ├─► client-instrumenter-*   │ │
+│  │   ├─► server-packet-crafter  │    │   ├─► client-peer-emulator    │ │
+│  │   ├─► server-code-analyzer   │    │   ├─► client-code-analyzer    │ │
+│  │   ├─► server-protocol-mapper │    │   ├─► client-protocol-mapper  │ │
+│  │   └─► server-analysis-superv │    │   └─► client-analysis-superv  │ │
+│  └──────────────┬───────────────┘    └───────────────┬───────────────┘ │
+│                 └──────────── shared MCP ─────────────┘                 │
+│   ghidra-headless (PyGhidra 3.1.0 → Ghidra 12.1 JVM, stdio)            │
+│   frida-live (frida-mcp-server.py, Frida 17.10.1 → target, stdio)      │
+│                                                                        │
+│  Output root: /workspace/netproto/<target>/…   (shared by both modes)  │
+│  Bind mount:  ./workspace ↔ /workspace   ·   Network: --network host   │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## The 6-Agent System
+## The Agent System (split server/client stacks)
+
+Both flows write under the shared output root `/workspace/netproto/<target>/…`. Each
+orchestrator is `mode: primary`; every other agent is a `mode: subagent` it delegates to via
+the `task` tool. Choose a flow with `--agent server-orchestrator` or `--agent client-orchestrator`
+(or `PH_MODE` for autonomous runs).
+
+### Server stack — protocol inference of a listening binary
 
 | Agent | Trigger | Owns | Role |
 |---|---|---|---|
-| `server-orchestrator` | User prompt | `state.json`, `packet_graph.json` | Drives the probe loop. Delegates everything — never touches Frida or Ghidra directly. |
-| `server-instrumenter` | INIT / RESET / OBSERVE / HARVEST | `branches.log`, Frida session | Eyes inside the binary. Holds the persistent Frida session, installs branch hooks, captures comparison events. |
-| `server-packet-crafter` | SEND step | `scripts/send_*.py` | Hands on the wire. Ephemeral per step — replays all confirmed prior steps, then sends one new probe packet. |
-| `server-protocol-mapper` | Every 5 steps + exit | `protocol_model.json` | Reads all accumulated logs and builds the final structured protocol model. |
-| `server-code-analyzer` | Each new branch covered | `vulnerabilities.jsonl` | Decompiles every newly-hit function, extracts seeds, installs Tier 2 hooks, appends real-time vulnerability findings. |
-| `server-analysis-supervisor` | Every 5 steps or plateau ≥ 2 | — (read-only) | Computes the full coverage gap, detects stale frontiers, recommends the next probe strategy. |
+| `server-orchestrator` | User prompt / `PH_MODE=server` | `state.json`, `packet_graph.json` | Drives the probe loop. Delegates everything — never touches Frida or Ghidra directly. |
+| `server-instrumenter` (`-linux` / `-windows`) | INIT / RESET / OBSERVE / HARVEST | `branches.log`, Frida session | Holds the persistent Frida session, installs branch hooks, captures comparison/recv events. |
+| `server-packet-crafter` | SEND step | `scripts/send_*.py` | Ephemeral per step — replays confirmed prior steps, then sends one new probe packet. |
+| `server-code-analyzer` | Each new branch covered | `vulnerabilities.jsonl` | Decompiles newly-hit functions, extracts seeds, installs Tier 2 hooks, appends vuln findings. |
+| `server-protocol-mapper` | Every 5 steps + exit | `protocol_model.json` (+ append `knowledge.jsonl`) | Reads all logs and builds the final structured protocol model. |
+| `server-analysis-supervisor` | Every 5 steps or plateau ≥ 2 | — (read-only) | Coverage-gap + stale-frontier analysis; returns `priority_ghidra_branches` and probe strategy. |
+
+### Client stack — closed-source client reversing
+
+| Agent | Trigger | Owns | Role |
+|---|---|---|---|
+| `client-orchestrator` | User prompt / `PH_MODE=client` | `state.json`, `packet_graph.json`, `client_sends.log`, `io_events.log` | Discovers connect targets, redirects them in-process to a local fake peer, records outbound messages. Sole writer of the two client logs. |
+| `client-instrumenter-linux` / `-windows` | INIT / DISCOVER / REDIRECT / TRIGGER / OBSERVE | Frida session | Attaches (`desock=false`), discovers `connect`/`WSAConnect` targets, applies sockaddr redirects, captures outbound IO. |
+| `client-peer-emulator` | REDIRECT | `scripts/peer_*.py`, `peer_events.log` | Starts a **long-lived** local fake peer (pid file + readiness probe), logs peer-side observations. Never writes the client logs. |
+| `client-code-analyzer` | Each new branch covered | static hints / seeds | Decompiles connect/send/TLS/config paths, extracts hints, installs Tier 2 hooks. |
+| `client-protocol-mapper` | Exit (if runtime IO exists) | `protocol_model.json` | Consolidates state, graph, client logs and peer scripts into the outbound model. |
+| `client-analysis-supervisor` | Every 5 steps / plateau | — (read-only) | Diagnoses stale connect triggers, missing redirects, empty IO, TLS/cert blockers, endpoint divergence. |
 
 ### Agent boundaries
 
-Each agent has strictly-enforced tool access. The orchestrator has `read`, `edit`, and `task` only — it cannot call Frida or Ghidra tools directly. The server-packet-crafter has no file-read access — all context arrives in its input contract. The server-analysis-supervisor is read-only and cannot write files or delegate tasks.
+Each agent has strictly-enforced tool access. Both orchestrators have `read`, `edit`, and `task`
+only — they cannot call Frida or Ghidra directly, and a server orchestrator cannot delegate client
+agents (or vice versa). The packet-crafter has no file-read access — all context arrives in its
+input contract. Both analysis-supervisors are read-only (no writes, no delegation) and emit Ghidra
+static addresses (`priority_ghidra_branches`); the orchestrator rebases them to live addresses.
 
-`state.json` ownership is explicit: server-instrumenter writes it only at INIT and HARVEST OBSERVE; the orchestrator owns all other updates. In RESET and OBSERVE modes, the server-instrumenter must not read or write `state.json` at all.
+Log ownership is explicit. Server: `server-instrumenter` writes `state.json` only at INIT and
+HARVEST OBSERVE; the orchestrator owns all other updates. Client: the `client-orchestrator` is the
+**sole** writer of `client_sends.log` and `io_events.log` (Frida-originated truth), while
+`client-peer-emulator` writes only `peer_events.log`. MCP servers are managed by opencode in both
+modes and must never be killed, restarted, or inspected manually.
 
 ---
 
@@ -327,9 +346,9 @@ RUN apt-get update && apt-get install -y nodejs npm && \
     npm install -g opencode-ai@1.15.13 @ai-sdk/google && \
 ```
 
-### 2. Edit the Dockerfile — register the Gemini provider
+### 2. Register the Gemini provider
 
-Inside the `opencode.jsonc` heredoc, add a `"gemini"` entry to the `"provider"` object:
+In `config/opencode/opencode.jsonc`, add a `"gemini"` entry to the `"provider"` object:
 
 ```json
 "gemini": {
@@ -343,16 +362,20 @@ Inside the `opencode.jsonc` heredoc, add a `"gemini"` entry to the `"provider"` 
 }
 ```
 
-### 3. Update model assignments for all 6 agents
+### 3. Update model assignments
 
-| Agent | Recommended model |
+Model assignments live in `config/opencode/opencode.jsonc` (the `agent.<name>.model` field),
+which is COPYed into the image at build. Edit that file, then `./build.sh`. The table below is for
+the server stack; apply the same per-role choices to the matching `client-*` agents.
+
+| Agent role (server / client) | Recommended model |
 |---|---|
-| `server-orchestrator` | `gemini/gemini-2.5-pro` |
-| `server-instrumenter` | `gemini/gemini-2.5-flash` |
-| `server-packet-crafter` | `gemini/gemini-2.0-flash` |
-| `server-protocol-mapper` | `gemini/gemini-2.5-pro` |
-| `server-code-analyzer` | `gemini/gemini-2.5-pro` |
-| `server-analysis-supervisor` | `gemini/gemini-2.5-flash` |
+| `*-orchestrator` | `gemini/gemini-2.5-pro` |
+| `*-instrumenter*` | `gemini/gemini-2.5-flash` |
+| `server-packet-crafter` / `client-peer-emulator` | `gemini/gemini-2.0-flash` |
+| `*-protocol-mapper` | `gemini/gemini-2.5-pro` |
+| `*-code-analyzer` | `gemini/gemini-2.5-pro` |
+| `*-analysis-supervisor` | `gemini/gemini-2.5-flash` |
 
 ### 4. Add your API key to the Dockerfile
 
@@ -683,10 +706,14 @@ packethammer/
 ├── SKILL.md                         — /generate-protocol-report skill specification
 ├── LICENSE.md
 ├── COMMERCIAL-LICENSE.md
-├── Dockerfile                       — image build + opencode.jsonc heredoc (6 agents)
+├── Dockerfile                       — image build (COPYs config/, injects API key)
 ├── build.sh                         — docker build wrapper
-├── start.sh                         — docker run with bind mount + post-exit chown
-├── frida-mcp-server.py              — frida-live MCP server (16 tools, Tier 1 + 2 oracle)
+├── start.sh                         — interactive TUI launcher (PH_INTERACTIVE=1) + post-exit chown
+├── config/                          — tracked opencode config + autonomous runner
+│   ├── opencode/opencode.jsonc      — providers, models, per-agent permissions/wiring
+│   ├── opencode/agents/*.md         — server-* and client-* agent prompts
+│   └── run-pipeline.sh              — autonomous headless runner (watchdog → RESULT.md)
+├── frida-mcp-server.py              — frida-live MCP server (Tier 1 + 2 oracle + client redirect/IO)
 ├── ghidra_headless_analyze.py       — ghidra-headless MCP server (stdio JSON-RPC, PyGhidra)
 ├── ghidra/
 │   └── ghidra_12.1_PUBLIC_20260513.zip
