@@ -53,10 +53,10 @@ Many server protocols reject packets that do not present a valid token, magic va
 **Tier 1 — stdlib comparison hooks (always active)**
 Frida hooks `strcmp`, `strncmp`, `strcasecmp`, and `memcmp` at attach time. Every failed comparison is recorded as `{fn, a0, a1}` — one side is the bytes we sent, the other side is what the binary expected. That expected side becomes a seed.
 
-**Tier 2 — address-specific argument capture (installed by code-analyzer)**
-When a function contains custom comparison logic that does not call a stdlib function, Tier 1 is blind. After `code-analyzer` decompiles the function, it identifies non-stdlib comparisons and calls `frida-live_hook_address(live_addr, label)` to install an argument-capture hook at the specific instruction. The HARVEST step reads these samples as a fallback when Tier 1 yields nothing.
+**Tier 2 — address-specific argument capture (installed by server-code-analyzer)**
+When a function contains custom comparison logic that does not call a stdlib function, Tier 1 is blind. After `server-code-analyzer` decompiles the function, it identifies non-stdlib comparisons and calls `frida-live_hook_address(live_addr, label)` to install an argument-capture hook at the specific instruction. The HARVEST step reads these samples as a fallback when Tier 1 yields nothing.
 
-Harvested seeds are written to `state.json` and passed to the packet-crafter on subsequent iterations. Seeds are always named mechanically (`strcmp_a1@0`, `tier2_a1@0`, `decompile_str_0`) — the pipeline never infers semantic meaning.
+Harvested seeds are written to `state.json` and passed to the server-packet-crafter on subsequent iterations. Seeds are always named mechanically (`strcmp_a1@0`, `tier2_a1@0`, `decompile_str_0`) — the pipeline never infers semantic meaning.
 
 ### PIE address rebasing
 
@@ -80,28 +80,28 @@ live_addr     = ghidra_addr − image_base + live_base
 │  phammer (wrapper) → opencode TUI                               │
 │       │                                                         │
 │       ▼                                                         │
-│  netproto-orchestrator  (primary agent)                         │
+│  server-orchestrator  (primary agent)                         │
 │       │  task tool  ── permission.task grants delegation        │
 │       │                                                         │
-│       ├─► @net-instrumenter                                     │
+│       ├─► @server-instrumenter                                     │
 │       │        ├── ghidra-headless MCP (stdio)                  │
 │       │        │     PyGhidra 3.1.0 → Ghidra 12.1 JVM          │
 │       │        └── frida-live MCP (stdio)                       │
 │       │              frida-mcp-server.py                        │
 │       │              Frida 17.10.1 → spawned target process     │
 │       │                                                         │
-│       ├─► @packet-crafter                                       │
+│       ├─► @server-packet-crafter                                       │
 │       │        └── python3 / scapy / socket                     │
 │       │                                                         │
-│       ├─► @protocol-mapper                                      │
+│       ├─► @server-protocol-mapper                                      │
 │       │        └── reads logs → writes protocol_model.json      │
 │       │                                                         │
-│       ├─► @code-analyzer        (triggered: new branch covered) │
+│       ├─► @server-code-analyzer        (triggered: new branch covered) │
 │       │        ├── ghidra-headless_decompile (per function)     │
 │       │        └── frida-live_hook_address (Tier 2 oracle)      │
 │       │              writes vulnerabilities.jsonl               │
 │       │                                                         │
-│       └─► @analysis-supervisor  (triggered: every 5 steps)     │
+│       └─► @server-analysis-supervisor  (triggered: every 5 steps)     │
 │                └── ghidra-headless_list_branches (gap analysis) │
 │                      returns recommendations only               │
 │                                                                 │
@@ -116,18 +116,18 @@ live_addr     = ghidra_addr − image_base + live_base
 
 | Agent | Trigger | Owns | Role |
 |---|---|---|---|
-| `netproto-orchestrator` | User prompt | `state.json`, `packet_graph.json` | Drives the probe loop. Delegates everything — never touches Frida or Ghidra directly. |
-| `net-instrumenter` | INIT / RESET / OBSERVE / HARVEST | `branches.log`, Frida session | Eyes inside the binary. Holds the persistent Frida session, installs branch hooks, captures comparison events. |
-| `packet-crafter` | SEND step | `scripts/send_*.py` | Hands on the wire. Ephemeral per step — replays all confirmed prior steps, then sends one new probe packet. |
-| `protocol-mapper` | Every 5 steps + exit | `protocol_model.json` | Reads all accumulated logs and builds the final structured protocol model. |
-| `code-analyzer` | Each new branch covered | `vulnerabilities.jsonl` | Decompiles every newly-hit function, extracts seeds, installs Tier 2 hooks, appends real-time vulnerability findings. |
-| `analysis-supervisor` | Every 5 steps or plateau ≥ 2 | — (read-only) | Computes the full coverage gap, detects stale frontiers, recommends the next probe strategy. |
+| `server-orchestrator` | User prompt | `state.json`, `packet_graph.json` | Drives the probe loop. Delegates everything — never touches Frida or Ghidra directly. |
+| `server-instrumenter` | INIT / RESET / OBSERVE / HARVEST | `branches.log`, Frida session | Eyes inside the binary. Holds the persistent Frida session, installs branch hooks, captures comparison events. |
+| `server-packet-crafter` | SEND step | `scripts/send_*.py` | Hands on the wire. Ephemeral per step — replays all confirmed prior steps, then sends one new probe packet. |
+| `server-protocol-mapper` | Every 5 steps + exit | `protocol_model.json` | Reads all accumulated logs and builds the final structured protocol model. |
+| `server-code-analyzer` | Each new branch covered | `vulnerabilities.jsonl` | Decompiles every newly-hit function, extracts seeds, installs Tier 2 hooks, appends real-time vulnerability findings. |
+| `server-analysis-supervisor` | Every 5 steps or plateau ≥ 2 | — (read-only) | Computes the full coverage gap, detects stale frontiers, recommends the next probe strategy. |
 
 ### Agent boundaries
 
-Each agent has strictly-enforced tool access. The orchestrator has `read`, `edit`, and `task` only — it cannot call Frida or Ghidra tools directly. The packet-crafter has no file-read access — all context arrives in its input contract. The analysis-supervisor is read-only and cannot write files or delegate tasks.
+Each agent has strictly-enforced tool access. The orchestrator has `read`, `edit`, and `task` only — it cannot call Frida or Ghidra tools directly. The server-packet-crafter has no file-read access — all context arrives in its input contract. The server-analysis-supervisor is read-only and cannot write files or delegate tasks.
 
-`state.json` ownership is explicit: net-instrumenter writes it only at INIT and HARVEST OBSERVE; the orchestrator owns all other updates. In RESET and OBSERVE modes, the net-instrumenter must not read or write `state.json` at all.
+`state.json` ownership is explicit: server-instrumenter writes it only at INIT and HARVEST OBSERVE; the orchestrator owns all other updates. In RESET and OBSERVE modes, the server-instrumenter must not read or write `state.json` at all.
 
 ---
 
@@ -181,6 +181,37 @@ Run the full protocol inference pipeline and write all output to /workspace/netp
 
 The orchestrator initialises Frida, runs Ghidra, discovers the listening port, hooks all branch addresses, and begins the probe loop. No further input is required.
 
+### 5. Autonomous run (hands-off)
+
+The container's default entrypoint is `/opt/run-pipeline.sh` — a headless watchdog that takes a single first prompt and drives the pipeline to a final result with **no human in the loop**. It restarts the orchestrator if it stalls or dies (resuming from `state.json`, never re-INITing), stops on a real terminal condition, writes `RESULT.md`, and sets the container exit code to reflect the outcome.
+
+Drive it entirely through environment variables:
+
+```bash
+docker run --rm \
+  --network host --add-host host.docker.internal:host-gateway \
+  -v "$(pwd)/workspace:/workspace" \
+  -e PH_MODE=server \
+  -e PH_TARGET=/workspace/server \
+  -e PH_PROMPT="Analyze the binary at /workspace/server. Run the full protocol inference pipeline and write all output to /workspace/netproto/server/." \
+  packethammer:latest
+```
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `PH_MODE` | `server` | `server` (protocol inference) or `client` (closed-source client reversing) — selects the orchestrator stack |
+| `PH_TARGET` | — | Absolute path to the target binary (required) |
+| `PH_PROMPT` | — | First prompt; if empty, read from `/workspace/INIT_PROMPT.txt` |
+| `PH_MODEL` | — | Optional model id override for the orchestrator |
+| `PH_MAX_ITERS` | `50` | Max orchestrator (re)starts before giving up |
+| `PH_WALLCLOCK_SEC` | `14400` | Hard wall-clock budget (seconds) |
+| `PH_STALL_LIMIT` | `3` | Consecutive no-progress iterations before stopping |
+| `PH_INTERACTIVE` | `0` | Set to `1` to drop to an interactive shell instead of running |
+
+The final summary lands at `/workspace/netproto/<target>/RESULT.md` (phase, exit reason, coverage, and links to `protocol_model.json` and the evidence logs). Because `./workspace` is bind-mounted, it's available on the host immediately. Exit code `0` means a clean `done`; non-zero means a blocker, stall, or watchdog limit (the reason is in `RESULT.md`).
+
+To debug interactively instead, run with `-e PH_INTERACTIVE=1` (or use `./start.sh`, which keeps the legacy interactive shell) and drive it with `phammer` as in step 4.
+
 ---
 
 ## Example Prompts
@@ -220,7 +251,7 @@ Re-attach Frida and continue probing from the current frontier.
 
 ```
 Do not send any packets.
-Delegate to @protocol-mapper to read /workspace/netproto/server/branches.log,
+Delegate to @server-protocol-mapper to read /workspace/netproto/server/branches.log,
 packet_graph.json, and state.json, then write protocol_model.json.
 Include all observed sequences with per-step annotations and a vulnerability report.
 ```
@@ -284,12 +315,12 @@ Inside the `opencode.jsonc` heredoc, add a `"gemini"` entry to the `"provider"` 
 
 | Agent | Recommended model |
 |---|---|
-| `netproto-orchestrator` | `gemini/gemini-2.5-pro` |
-| `net-instrumenter` | `gemini/gemini-2.5-flash` |
-| `packet-crafter` | `gemini/gemini-2.0-flash` |
-| `protocol-mapper` | `gemini/gemini-2.5-pro` |
-| `code-analyzer` | `gemini/gemini-2.5-pro` |
-| `analysis-supervisor` | `gemini/gemini-2.5-flash` |
+| `server-orchestrator` | `gemini/gemini-2.5-pro` |
+| `server-instrumenter` | `gemini/gemini-2.5-flash` |
+| `server-packet-crafter` | `gemini/gemini-2.0-flash` |
+| `server-protocol-mapper` | `gemini/gemini-2.5-pro` |
+| `server-code-analyzer` | `gemini/gemini-2.5-pro` |
+| `server-analysis-supervisor` | `gemini/gemini-2.5-flash` |
 
 ### 4. Add your API key to the Dockerfile
 
@@ -321,7 +352,7 @@ When the run completes (`phase: done` in `state.json`):
 | `branches.log` | Per-packet JSONL trace — every probe sent, branches reached, field annotations, oracle output |
 | `packet_graph.json` | Full decision graph: nodes keyed by branch address, edges with packet bytes and field influence map |
 | `protocol_model.json` | Complete protocol specification: transport, framing, commands, response codes, session flow, vulnerabilities |
-| `vulnerabilities.jsonl` | Real-time findings appended by code-analyzer during the run — includes decompile evidence |
+| `vulnerabilities.jsonl` | Real-time findings appended by server-code-analyzer during the run — includes decompile evidence |
 | `ghidra_analysis.json` | Static analysis cache — reused across restarts and runs on the same binary |
 | `scripts/send_<seq>_s<step>.py` | Reproducible standalone Python scripts for every discovered sequence step |
 
@@ -397,7 +428,7 @@ Persistent Frida session — one attach per container run, unlimited queries. Al
 <details>
 <summary>state.json</summary>
 
-Written by `net-instrumenter` at INIT. Updated by `orchestrator` after each OBSERVE cycle.
+Written by `server-instrumenter` at INIT. Updated by `orchestrator` after each OBSERVE cycle.
 
 ```json
 {
@@ -432,7 +463,7 @@ Written by `net-instrumenter` at INIT. Updated by `orchestrator` after each OBSE
 <details>
 <summary>branches.log (one JSON object per line)</summary>
 
-Written by `net-instrumenter` in OBSERVE MODE after each packet send.
+Written by `server-instrumenter` in OBSERVE MODE after each packet send.
 
 ```json
 {
@@ -458,7 +489,7 @@ Written by `net-instrumenter` in OBSERVE MODE after each packet send.
 <details>
 <summary>vulnerabilities.jsonl (one JSON object per line)</summary>
 
-Written by `code-analyzer` in real time as functions are decompiled.
+Written by `server-code-analyzer` in real time as functions are decompiled.
 
 ```json
 {
@@ -540,11 +571,11 @@ The `permission` block in `opencode.jsonc` is missing or malformed. It must use 
 ```jsonc
 "permission": {
   "task": {
-    "net-instrumenter":    "allow",
-    "packet-crafter":      "allow",
-    "protocol-mapper":     "allow",
-    "code-analyzer":       "allow",
-    "analysis-supervisor": "allow"
+    "server-instrumenter":    "allow",
+    "server-packet-crafter":      "allow",
+    "server-protocol-mapper":     "allow",
+    "server-code-analyzer":       "allow",
+    "server-analysis-supervisor": "allow"
   }
 }
 ```
@@ -567,13 +598,13 @@ print('ghidra image_base:', hex(g.get('image_base', 0)))
 print('match:', s.get('image_base') == hex(g.get('image_base', 0)))"
 ```
 
-If they don't match, the net-instrumenter read or assumed a wrong base. Check the INIT log and rebuild.
+If they don't match, the server-instrumenter read or assumed a wrong base. Check the INIT log and rebuild.
 </details>
 
 <details>
 <summary>Wrong port in state.json (e.g. socket:localhost:9876)</summary>
 
-The net-instrumenter guessed a port instead of discovering it. After INIT, it must run `lsof -Pan -i tcp -p <PID>` or `ss -tlnp | grep <PID>` to read the actual listening port. Check that the INIT prompt does not pass `desock=true` — with desock active the binary intercepts socket syscalls and never binds to a real OS port, so discovery finds nothing.
+The server-instrumenter guessed a port instead of discovering it. After INIT, it must run `lsof -Pan -i tcp -p <PID>` or `ss -tlnp | grep <PID>` to read the actual listening port. Check that the INIT prompt does not pass `desock=true` — with desock active the binary intercepts socket syscalls and never binds to a real OS port, so discovery finds nothing.
 </details>
 
 <details>

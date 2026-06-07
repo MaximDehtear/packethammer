@@ -1,0 +1,374 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "searxng": {
+      "type": "remote",
+      "url": "http://host.docker.internal:8081/mcp",
+      "enabled": true
+    },
+    "gdb-debugger": {
+      "type": "local",
+      "command": [
+        "node",
+        "/opt/mcp-gdb/build/index.js"
+      ],
+      "enabled": true
+    },
+    "ghidra-headless": {
+      "type": "local",
+      "command": [
+        "python3",
+        "/opt/ghidra_headless_analyze.py"
+      ],
+      "enabled": true
+    },
+    "frida-live": {
+      "type": "local",
+      "command": [
+        "python3",
+        "/opt/frida-mcp-server.py"
+      ],
+      "enabled": true
+    }
+  },
+  "provider": {
+    "openrouter": {
+      "name": "OpenRouter",
+      "npm": "@ai-sdk/openai-compatible",
+      "models": {
+        "claude-sonnet-4-5": {
+          "name": "anthropic/claude-sonnet-4-5"
+        },
+        "claude-opus-4": {
+          "name": "anthropic/claude-opus-4"
+        },
+        "gemini-2.5-pro": {
+          "name": "google/gemini-2.5-pro-preview-06-05"
+        },
+        "llama-4-maverick": {
+          "name": "meta-llama/llama-4-maverick"
+        },
+        "nvidia/nemotron-3-ultra-550b-a55b:free": {
+          "name": "nvidia/nemotron-3-ultra-550b-a55b:free"
+        },
+        "nemotron-ultra-550b": {
+          "name": "nvidia/nemotron-3-ultra-550b-a55b:free"
+        },
+        "nemotron-super-120b": {
+          "name": "nvidia/nemotron-3-super-120b-a12b:free"
+        },
+        "owl-alpha": {
+          "name": "openrouter/owl-alpha"
+        },
+        "openai/gpt-oss-120b:free": {
+          "name": "openai/gpt-oss-120b:free"
+        },
+        "gpt-oss-120b": {
+          "name": "openai/gpt-oss-120b:free"
+        },
+        "poolside/laguna-m.1:free": {
+          "name": "poolside/laguna-m.1:free"
+        },
+        "laguna-m1": {
+          "name": "poolside/laguna-m.1:free"
+        },
+        "gemma-4-31b": {
+          "name": "google/gemma-4-31b-it:free"
+        },
+        "deepseek-v4-flash": {
+          "name": "deepseek/deepseek-v4-flash"
+        },
+        "mistral-small": {
+          "name": "mistralai/mistral-small-2603"
+        },
+        "gemini-3-1-flash-lite": {
+          "name": "google/gemini-3.1-flash-lite"
+        },
+        "qwen3-7-plus": {
+          "name": "qwen/qwen3.7-plus"
+        },
+        "deepseek-v4-pro": {
+          "name": "deepseek/deepseek-v4-pro"
+        },
+        "deepseek-v3.2": {
+          "name": "deepseek/deepseek-v3.2"
+        },
+        "openrouter/owl-alpha": {
+          "name": "openrouter/owl-alpha"
+        }
+      },
+      "options": {
+        "baseURL": "https://openrouter.ai/api/v1",
+        "apiKey": ""
+      }
+    },
+    "gemini": {
+      "name": "Google Gemini",
+      "npm": "@ai-sdk/google",
+      "models": {
+        "gemini-2.5-pro": {
+          "name": "gemini-2.5-pro-preview-06-05"
+        },
+        "gemini-2.5-flash": {
+          "name": "gemini-2.5-flash-preview-05-20"
+        },
+        "gemini-2.0-flash": {
+          "name": "gemini-2.0-flash"
+        }
+      }
+    },
+    "ollama": {
+      "models": {
+        "ai2-pentest": {
+          "_launch": true,
+          "name": "ai2-pentest"
+        },
+        "dsgen": {
+          "_launch": true,
+          "name": "dsgen"
+        },
+        "gpt-oss:20b": {
+          "_launch": true,
+          "name": "gpt-oss:20b"
+        },
+        "qwen3coder-custom": {
+          "_launch": true,
+          "name": "qwen3coder-custom"
+        },
+        "qwen3coder-trained": {
+          "_launch": true,
+          "name": "qwen3coder-trained"
+        },
+        "qwen3_6-27b-custom:q6_k": {
+          "_launch": true,
+          "name": "qwen3_6-27b-custom:q6_k"
+        },
+        "qwen3_6-27b-custom:q4_k_m": {
+          "_launch": true,
+          "name": "qwen3_6-27b-custom:q4_k_m"
+        },
+        "qwen3_6-27b-custom:q6_K": {
+          "_launch": true,
+          "name": "qwen3_6-27b-custom:q6_K"
+        },
+        "qwen3_6-27b-custom:q4_K_M": {
+          "_launch": true,
+          "name": "qwen3_6-27b-custom:q4_K_M"
+        }
+      },
+      "name": "Ollama",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "baseURL": "http://host.docker.internal:11434/v1"
+      }
+    },
+    "vllm": {
+      "models": {
+        "qwen36-nvfp4": {
+          "_launch": false,
+          "name": "qwen36-nvfp4"
+        }
+      },
+      "name": "vLLM",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "baseURL": "http://host.docker.internal:8008/v1",
+        "apiKey": "EMPTY"
+      }
+    }
+  },
+  "agent": {
+    "server-orchestrator": {
+      "mode": "primary",
+      "permission": {
+        "task": {
+          "server-instrumenter": "allow",
+          "server-instrumenter-linux": "allow",
+          "server-instrumenter-windows": "allow",
+          "server-packet-crafter": "allow",
+          "server-protocol-mapper": "allow",
+          "server-code-analyzer": "allow",
+          "server-analysis-supervisor": "allow"
+        },
+        "bash": "deny",
+        "glob": "deny",
+        "grep": "deny",
+        "list": "deny",
+        "webfetch": "deny",
+        "websearch": "deny"
+      },
+      "model": "ollama/qwen3_6-27b-custom:q4_K_M",
+      "prompt": "{file:./agents/server-orchestrator.md}"
+    },
+    "client-orchestrator": {
+      "mode": "primary",
+      "permission": {
+        "task": {
+          "client-instrumenter-linux": "allow",
+          "client-instrumenter-windows": "allow",
+          "client-peer-emulator": "allow",
+          "client-protocol-mapper": "allow",
+          "client-code-analyzer": "allow",
+          "client-analysis-supervisor": "allow"
+        },
+        "bash": "deny",
+        "glob": "deny",
+        "grep": "deny",
+        "list": "deny",
+        "webfetch": "deny",
+        "websearch": "deny"
+      },
+      "model": "ollama/qwen3_6-27b-custom:q4_K_M",
+      "prompt": "{file:./agents/client-orchestrator.md}"
+    },
+    "server-instrumenter": {
+      "mode": "subagent",
+      "model": "ollama/qwen3_6-27b-custom:q4_K_M",
+      "prompt": "{file:./agents/server-instrumenter.md}",
+      "permission": {
+        "edit": "allow",
+        "bash": "allow",
+        "webfetch": "allow",
+        "websearch": "allow"
+      }
+    },
+    "server-instrumenter-linux": {
+      "mode": "subagent",
+      "model": "ollama/qwen3_6-27b-custom:q4_K_M",
+      "prompt": "{file:./agents/server-instrumenter-linux.md}",
+      "permission": {
+        "edit": "allow",
+        "bash": "allow",
+        "webfetch": "allow",
+        "websearch": "allow"
+      }
+    },
+    "server-instrumenter-windows": {
+      "mode": "subagent",
+      "model": "ollama/qwen3_6-27b-custom:q4_K_M",
+      "prompt": "{file:./agents/server-instrumenter-windows.md}",
+      "permission": {
+        "edit": "allow",
+        "bash": "allow",
+        "webfetch": "allow",
+        "websearch": "allow"
+      }
+    },
+    "client-instrumenter-linux": {
+      "mode": "subagent",
+      "model": "ollama/qwen3_6-27b-custom:q4_K_M",
+      "prompt": "{file:./agents/client-instrumenter-linux.md}",
+      "permission": {
+        "edit": "allow",
+        "bash": "allow",
+        "webfetch": "allow",
+        "websearch": "allow"
+      }
+    },
+    "client-instrumenter-windows": {
+      "mode": "subagent",
+      "model": "ollama/qwen3_6-27b-custom:q4_K_M",
+      "prompt": "{file:./agents/client-instrumenter-windows.md}",
+      "permission": {
+        "edit": "allow",
+        "bash": "allow",
+        "webfetch": "allow",
+        "websearch": "allow"
+      }
+    },
+    "server-packet-crafter": {
+      "mode": "subagent",
+      "model": "ollama/qwen3_6-27b-custom:q4_K_M",
+      "prompt": "{file:./agents/server-packet-crafter.md}",
+      "permission": {
+        "edit": "allow",
+        "bash": "allow",
+        "webfetch": "allow",
+        "websearch": "allow"
+      }
+    },
+    "client-peer-emulator": {
+      "mode": "subagent",
+      "model": "ollama/qwen3_6-27b-custom:q4_K_M",
+      "prompt": "{file:./agents/client-peer-emulator.md}",
+      "permission": {
+        "edit": "allow",
+        "bash": "allow",
+        "webfetch": "allow",
+        "websearch": "allow"
+      }
+    },
+    "client-code-analyzer": {
+      "mode": "subagent",
+      "model": "ollama/qwen3_6-27b-custom:q6_K",
+      "prompt": "{file:./agents/client-code-analyzer.md}",
+      "permission": {
+        "edit": "allow",
+        "bash": "allow",
+        "webfetch": "allow",
+        "websearch": "allow"
+      }
+    },
+    "client-protocol-mapper": {
+      "mode": "subagent",
+      "model": "ollama/qwen3_6-27b-custom:q4_K_M",
+      "prompt": "{file:./agents/client-protocol-mapper.md}",
+      "permission": {
+        "edit": "allow",
+        "bash": "allow",
+        "webfetch": "allow",
+        "websearch": "allow"
+      }
+    },
+    "server-protocol-mapper": {
+      "mode": "subagent",
+      "model": "ollama/qwen3_6-27b-custom:q4_K_M",
+      "prompt": "{file:./agents/server-protocol-mapper.md}",
+      "permission": {
+        "edit": "allow",
+        "bash": "allow",
+        "webfetch": "allow",
+        "websearch": "allow"
+      }
+    },
+    "server-code-analyzer": {
+      "mode": "subagent",
+      "model": "ollama/qwen3_6-27b-custom:q6_K",
+      "prompt": "{file:./agents/server-code-analyzer.md}",
+      "permission": {
+        "edit": "allow",
+        "bash": "allow",
+        "webfetch": "allow",
+        "websearch": "allow"
+      }
+    },
+    "server-analysis-supervisor": {
+      "mode": "subagent",
+      "model": "ollama/qwen3_6-27b-custom:q6_K",
+      "prompt": "{file:./agents/server-analysis-supervisor.md}",
+      "permission": {
+        "edit": "allow",
+        "bash": "allow",
+        "webfetch": "allow",
+        "websearch": "allow"
+      }
+    },
+    "client-analysis-supervisor": {
+      "mode": "subagent",
+      "model": "ollama/qwen3_6-27b-custom:q6_K",
+      "prompt": "{file:./agents/client-analysis-supervisor.md}",
+      "permission": {
+        "edit": "allow",
+        "bash": "allow",
+        "webfetch": "allow",
+        "websearch": "allow"
+      }
+    }
+  },
+  "permission": {
+    "edit": "allow",
+    "bash": "allow",
+    "webfetch": "allow",
+    "websearch": "allow"
+  }
+}
