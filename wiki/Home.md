@@ -69,6 +69,15 @@ PacketHammer combines three independent layers into a single feedback loop. Each
 └──────────────────────────────────────────────────────┘
 ```
 
+### Platform Detection
+
+PacketHammer autonomously determines whether a target binary is for Linux or Windows to select the correct instrumentation stack:
+
+1. **Initial Heuristics**: The orchestrator inspects the file extension (`.exe`, `.dll` for Windows) and path metadata.
+2. **Ghidra Analysis**: The selected instrumenter runs `ghidra-headless_analyze`. Ghidra's loader identifies the binary format (ELF for Linux, PE for Windows) and reports it.
+3. **Dynamic Confirmation**: During the `INIT` phase, the instrumenter verifies the executable format against its own runtime (e.g., checking for Winsock imports on Windows vs. glibc on Linux).
+4. **Fallback**: If the platform is ambiguous, the orchestrator first runs a static analysis task to confirm the format before committing to a specific Frida runtime stack.
+
 ---
 
 ## System Architecture
