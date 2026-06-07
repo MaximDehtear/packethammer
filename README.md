@@ -166,11 +166,14 @@ import sys,json; [print(m['name']) for m in json.load(sys.stdin).get('models',[]
 
 ### 1. Build
 
+The OpenRouter API key is **not** stored in the repo — pass it at build time from your shell:
+
 ```bash
+export OPENROUTER_API_KEY=sk-or-...   # your key; stays out of git
 ./build.sh
 ```
 
-Takes ~5–10 minutes on first build (Ghidra + Frida + PyGhidra + opencode). Rebuild after changes to `Dockerfile`, `frida-mcp-server.py`, or `ghidra_headless_analyze.py`.
+`build.sh` forwards it via `--build-arg OPENROUTER_API_KEY`, which the build injects into `opencode.jsonc`. Omit it if you only use Ollama or Gemini. Takes ~5–10 minutes on first build (Ghidra + Frida + PyGhidra + opencode). Rebuild after changes to `Dockerfile`, `frida-mcp-server.py`, or `ghidra_headless_analyze.py`.
 
 ### 2. Place your binary
 

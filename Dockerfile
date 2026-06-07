@@ -8,7 +8,11 @@ ENV OLLAMA_HOST=http://host.docker.internal:11434
 ENV OLLAMA_API_BASE=http://host.docker.internal:11434
 ENV OPENAI_API_BASE=http://host.docker.internal:11434
 ENV GOOGLE_GENERATIVE_AI_API_KEY=
-ENV OPENROUTER_API_KEY=
+# Provide the OpenRouter key at build time (never committed):
+#   export OPENROUTER_API_KEY=sk-or-...   then   ./build.sh
+# or: docker build --build-arg OPENROUTER_API_KEY=sk-or-... .
+ARG OPENROUTER_API_KEY=
+ENV OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
 
 ##############################################
 # 1. Base OS packages
